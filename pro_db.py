@@ -106,90 +106,49 @@ with top_c3:
 small_divider(70, 2, "#e6e6e6", 10)
 
 # ===============================
-# Sidebar: เพิ่มเคสด้วยมือ (ทุกคนใช้ได้)
+# SIDEBAR: SHARED UPLOAD (Admin only)
 # ===============================
 with st.sidebar:
-    st.header("➕ เพิ่มเคสด้วยมือ (Manual Add)")
-
-    # ป้องกัน error โดยสร้าง key ก่อนใช้งานเสมอ
-    if "manual_cases" not in st.session_state:
-        st.session_state.manual_cases = []  # list of dicts
-
-    with st.form(key="manual_add_form"):
-        col_op, col_note = st.columns(2)
-        with col_op:
-            new_op = st.text_input("Operation (หัตถการ)", placeholder="เช่น I+D, Excision")
-        with col_note:
-            new_note = st.text_input("Proc note", placeholder="รายละเอียดเพิ่มเติม")
-        submit_manual = st.form_submit_button("➕ เพิ่มเคสนี้")
-        
-        if submit_manual:
-            if not new_op.strip():
-                st.error("กรุณาใส่ Operation อย่างน้อย")
-            else:
-                new_case = {
-                    "icd9cm_name": new_op.strip(),
-                    "procnote": new_note.strip() if new_note.strip() else ""
-                }
-                st.session_state.manual_cases.append(new_case)
-                st.success(f"เพิ่มเคสเรียบร้อย: {new_op}")
-                st.rerun()
-
-    # แสดงจำนวนเคสที่เพิ่มด้วยมือ + ปุ่มล้าง
-    if st.session_state.manual_cases:  # ตอนนี้ปลอดภัยแล้ว
-        st.info(f"📌 มีเคสเพิ่มด้วยมือ {len(st.session_state.manual_cases)} รายการ")
-        if st.button("🗑️ ล้างเคสที่เพิ่มด้วยมือทั้งหมด"):
-            st.session_state.manual_cases = []
-            st.success("ล้างเคส manual แล้ว")
-            st.rerun()
-    else:
-        st.caption("ยังไม่มีเคสเพิ่มด้วยมือ")
-
+    st.header("Upload file (Admin only)")
+    if os.path.exists(SHARED_EXCEL_PATH):
+        stat = os.stat(SHARED_EXCEL_PATH)
+        ts = dt.datetime.fromtimestamp(stat.st_mtime)
+        year_th = ts.year + 543
+        time_str = ts.strftime(f"%d/%m/{year_th % 100} %H:%M")
+        st.success(f"📄 ใช้ไฟล์ล่าสุด: shared_schedule.xlsx\n\nอัปโหลดเมื่อ: {time_str}")
+        st.info("ทุกคนเห็นข้อมูลเดียวกันแล้ว")
+    uploaded_file = st.file_uploader(
+        "อัปโหลดไฟล์ Excel ใหม่ (.xlsx หรือ .xls)",
+        type=["xlsx", "xls"],
+        key="uploader"
+    )
+    if uploaded_file is not None:
+        with open(SHARED_EXCEL_PATH, "wb") as f:
+            f.write(uploaded_file.getvalue())
+        st.success(f"อัปโหลดสำเร็จ: {uploaded_file.name}")
+        st.rerun()
 
 # ===============================
-# อ่านไฟล์ shared + Manual Add Cases
+# อ่านไฟล์ shared
 # ===============================
-
-# โหลดเคสที่เพิ่มด้วยมือจาก session_state (รอดตายแม้ refresh)
-if "manual_cases" not in st.session_state:
-    st.session_state.manual_cases = []  # list of dicts
-
 if not os.path.exists(SHARED_EXCEL_PATH):
     st.info("🔒 รอ Admin อัปโหลดไฟล์ Excel ก่อนใช้งาน")
-    df_raw = pd.DataFrame(columns=["icd9cm_name", "procnote"])  # empty df
-else:
-    try:
-        df_raw = pd.read_excel(SHARED_EXCEL_PATH)
-    except Exception as e:
-        st.error(f"อ่านไฟล์ไม่ได้: {e}")
-        st.stop()
+    st.stop()
 
-# สร้าง key ถ้ายังไม่มี (ป้องกัน error)
-if "manual_cases" not in st.session_state:
-    st.session_state.manual_cases = []
+try:
+    df_raw = pd.read_excel(SHARED_EXCEL_PATH)
+except Exception as e:
+    st.error(f"อ่านไฟล์ไม่ได้: {e}")
+    st.stop()
 
-if not st.session_state.manual_cases:
-    df_final = df_raw.copy()
-else:
-    df_manual = pd.DataFrame(st.session_state.manual_cases)
-    df_final = pd.concat([df_raw, df_manual], ignore_index=True)
-
-# เวลาอัปโหลดไฟล์ (สำหรับ DB key) - ใช้ไฟล์จริง ถ้าไม่มีใช้เวลาปัจจุบัน
-if os.path.exists(SHARED_EXCEL_PATH):
-    upload_ts = dt.datetime.fromtimestamp(os.stat(SHARED_EXCEL_PATH).st_mtime)
-else:
-    upload_ts = dt.datetime.now()
+# เวลาอัปโหลดไฟล์ (สำหรับ DB key)
+upload_ts = dt.datetime.fromtimestamp(os.stat(SHARED_EXCEL_PATH).st_mtime)
 upload_date_str = upload_ts.strftime("%Y-%m-%d")
 active_file_name = "shared_schedule.xlsx"
 
-# โหลด completed cases (เก่ายังอยู่)
+# โหลด completed cases
 completed_set = load_completed_cases(upload_date_str, active_file_name)
-# เพิ่ม index ของ manual cases ว่า "ยังไม่เสร็จ" อัตโนมัติ
-max_original = len(df_raw)
-for i in range(max_original, len(df_final)):
-    completed_set.discard(i)  # ป้องกันกรณีมี index ซ้ำ (ไม่น่าเกิด)
 st.session_state["completed_cases"] = completed_set
-
 
 # แปลงเวลา พ.ศ.
 year_th = upload_ts.year + 543
@@ -621,4 +580,4 @@ else:
 small_divider(70, 2, "#eeeeee", 12)
 st.caption("Dashboard พร้อมใช้งานเต็มรูปแบบ! ไฟล์ Excel และสถานะเสร็จแล้วเป็น shared ทุกคนเห็นเหมือนกัน")
 
-df_raw = df_final  # <<< สำคัญ! แก้บรรทัดนี้เพื่อให้ส่วนอื่น ๆ ใช้ข้อมูลใหม่
+
